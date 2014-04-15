@@ -1,6 +1,6 @@
 package av.expr;
 
-import java.util.Iterator;
+import java.util.*;
 
 public class Main {
     public static interface ExpVisitor {
@@ -11,6 +11,10 @@ public class Main {
         Exp visit(Mul mul);
 
         Exp visit(Dev dev);
+
+        Exp visit(Var var);
+
+        void visit(Assign assign);
     }
 
     public static interface Exp {
@@ -60,6 +64,46 @@ public class Main {
                     throw new UnsupportedOperationException();
                 }
             };
+        }
+    }
+
+    public static class Var implements Exp {
+        private char c;
+
+        public Var(char c) {
+            this.c = c;
+        }
+
+        @Override
+        public void accept(ExpVisitor visitor) {
+            visitor.visit(this);
+        }
+
+        @Override
+        public void traverse(ExpVisitor visitor) {
+            visitor.visit(this);
+        }
+
+        @Override
+        public Iterator<Exp> iterator() {
+            return null;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+
+            Var var = (Var) o;
+
+            if (c != var.c) return false;
+
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            return (int) c;
         }
     }
 
@@ -150,6 +194,25 @@ public class Main {
         }
     }
 
+    public static class Assign extends BiExp {
+
+        public Assign(Exp left, Exp right) {
+            super(left, right);
+        }
+
+        @Override
+        public void accept(ExpVisitor visitor) {
+            visitor.visit(this);
+        }
+
+        public void traverse(ExpVisitor visitor) {
+            left.traverse(visitor);
+            visitor.visit(this);
+            right.traverse(visitor);
+        }
+
+    }
+
     /*
         private static void prettyPrint(Exp exp) {
             if (exp instanceof Num) {
@@ -200,7 +263,14 @@ public class Main {
     }
 
     public static void main(String[] args) {
-        Exp exp = new Sum(
+        Map<Var, Exp> context = new HashMap<>();
+        Evaluator evaluator = new Evaluator(context);
+
+        Exp exp1 = new Assign(new Var('x'), new Num(18));
+        exp1.accept(evaluator);
+        System.out.println(context.get(new Var('x')));
+
+        Exp exp2 = new Sum(
                 new Mul(
                         new Sum(new Num(10.0), new Num(21.0)),
                         new Sum(new Num(22.0), new Num(14.0))
@@ -211,86 +281,181 @@ public class Main {
                         //new Num(0)
                 )
         );
-        ExpVisitor prettyPrinter = new ExpVisitor() {
-            public Exp visit(Num num) {
-                System.out.print(num.number);
-                return null;
+        PrettyPrinter prettyPrinter = new PrettyPrinter();
+        exp2.accept(evaluator);
+        Exp resolvedResult = evaluator.getResult();
+        resolvedResult.accept(prettyPrinter);
+        System.out.println(prettyPrinter.getResult());
+
+    }
+
+     static class Evaluator implements ExpVisitor {
+        private final Deque<Exp> queue = new ArrayDeque<>();
+         private final Map<Var, Exp> context;
+         private boolean strict;
+
+         public Evaluator(Map<Var, Exp> context) {
+            this.context = context;
+        }
+
+         Evaluator(Map<Var, Exp> context, boolean strict) {
+             this.context = context;
+             this.strict = strict;
+         }
+
+         @Override
+        public Exp visit(Num num) {
+            queue.addLast(num);
+            return null;
+        }
+
+        @Override
+        public Exp visit(Sum sum) {
+            sum.left.accept(this);
+            sum.right.accept(this);
+            Exp e1 = queue.pollLast();
+            Exp e2 = queue.pollLast();
+            if(e1 instanceof Num && e2 instanceof Num) {
+                Num n1 = (Num) e1;
+                Num n2 = (Num) e2;
+                queue.addLast(new Num(n1.number.doubleValue() + n2.number.doubleValue()));
+            } else {
+                queue.push(new Sum(e1, e2));
             }
+            return null;
+        }
 
-            public Exp visit(Sum sum) {
-                System.out.print("(");
-                sum.left.accept(this);
-                System.out.print(" + ");
-                sum.right.accept(this);
-                System.out.print(")");
-                return null;
+        @Override
+        public Exp visit(Mul mul) {
+            mul.left.accept(this);
+            mul.right.accept(this);
+            Exp e1 = queue.pollLast();
+            Exp e2 = queue.pollLast();
+            if(e1 instanceof Num && e2 instanceof Num) {
+                Num n1 = (Num) e1;
+                Num n2 = (Num) e2;
+                queue.addLast(new Num(n1.number.doubleValue() * n2.number.doubleValue()));
+            } else {
+                queue.push(new Mul(e1, e2));
             }
+            return null;
+        }
 
-            public Exp visit(Mul mul) {
-                mul.left.accept(this);
-                System.out.print(" * ");
-                mul.right.accept(this);
-                return null;
+        @Override
+        public Exp visit(Dev dev) {
+            dev.left.accept(this);
+            dev.right.accept(this);
+            Exp e1 = queue.pollLast();
+            Exp e2 = queue.pollLast();
+            if(e1 instanceof Num && e2 instanceof Num) {
+                Num n1 = (Num) e1;
+                Num n2 = (Num) e2;
+                queue.addLast(new Num(n2.number.doubleValue() / n1.number.doubleValue()));
+            } else {
+                queue.push(new Dev(e1, e2));
             }
+            return null;
+        }
 
-            public Exp visit(Dev dev) {
-                dev.left.accept(this);
-                System.out.print(" / ");
-                dev.right.accept(this);
-                return null;
+        @Override
+        public Exp visit(Var var) {
+            Exp exp = context.get(var);
+            if(exp != null) {
+                exp.accept(this);
+            } else {
+                if(strict) throw new RuntimeException("dddd");
+                queue.addLast(var);
             }
-        };
-        exp.traverse(new ExpVisitor() {
-            @Override
-            public Exp visit(Num num) {
-                return null;
-            }
+            return null;
+        }
 
-            @Override
-            public Exp visit(Sum sum) {
-                return null;
-            }
+         @Override
+         public void visit(final Assign assign) {
+            assign.left.accept(new ExpVisitor() {
+                @Override
+                public Exp visit(Num num) {
+                    return null;
+                }
 
-            @Override
-            public Exp visit(Mul mul) {
-                return null;
-            }
+                @Override
+                public Exp visit(Sum sum) {
+                    return null;
+                }
 
-            @Override
-            public Exp visit(Dev dev) {
-                dev.right.accept(new ExpVisitor() {
-                    @Override
-                    public Exp visit(Num num) {
-                        if (num.number.intValue() == 0) {
-                            throw new RuntimeException("StaticCheck failed: Devide by zero");
-                        }
-                        return null;
-                    }
+                @Override
+                public Exp visit(Mul mul) {
+                    return null;
+                }
 
-                    @Override
-                    public Exp visit(Sum sum) {
-                        return null;
-                    }
+                @Override
+                public Exp visit(Dev dev) {
+                    return null;
+                }
 
-                    @Override
-                    public Exp visit(Mul mul) {
-                        return null;
-                    }
+                @Override
+                public Exp visit(Var var) {
+                    context.put(var, assign.right);
+                    return assign.right;
+                }
 
-                    @Override
-                    public Exp visit(Dev dev) {
-                        return null;
-                    }
-                });
-                return null;
-            }
-        });
-        Iterator<Exp> i = exp.iterator();
-        while (i.hasNext()) {
-            Exp e = i.next();
-            System.out.print("FROM " + e + ": ");
-            e.accept(prettyPrinter);
-            System.out.println();
+                @Override
+                public void visit(Assign assign) {
+
+                }
+            });
+         }
+
+         public Exp getResult() {
+            return queue.getLast();
+        }
+    }
+
+     static class PrettyPrinter implements ExpVisitor {
+        private StringBuffer sb = new StringBuffer();
+
+        public Exp visit(Num num) {
+            sb.append(num.number);
+            return null;
+        }
+
+        public Exp visit(Sum sum) {
+            sb.append("(");
+            sum.left.accept(this);
+            sb.append(" + ");
+            sum.right.accept(this);
+            sb.append(")");
+            return null;
+        }
+
+        public Exp visit(Mul mul) {
+            mul.left.accept(this);
+            sb.append(" * ");
+            mul.right.accept(this);
+            return null;
+        }
+
+        public Exp visit(Dev dev) {
+            dev.left.accept(this);
+            sb.append(" / ");
+            dev.right.accept(this);
+            return null;
+        }
+
+        @Override
+        public Exp visit(Var var) {
+            sb.append(var.c);
+            return null;
+        }
+
+         @Override
+         public void visit(Assign assign) {
+             assign.left.accept(this);
+             sb.append(" = ");
+             assign.right.accept(this);
+         }
+
+         public String getResult() {
+          return sb.toString();
         }
     }
 }
