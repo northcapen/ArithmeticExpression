@@ -18,6 +18,7 @@ public class REPLConsole {
 
     public static final String SIMPLIFY = "Simplify";
     public static final String EVALUATE = "Evaluate";
+    private SingleEditCommand singleEditCommand;
 
 
     public static final String GREETING = System.lineSeparator() + ">";
@@ -83,10 +84,19 @@ public class REPLConsole {
         });
 
 
-
-        frame.setVisible(true);
-        frame.setSize(500, 300);
-    }
+        textArea.getKeymap().addActionForKeyStroke(KeyStroke.getKeyStroke('Z', InputEvent.CTRL_DOWN_MASK), new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    singleEditCommand.unexecute();
+                } catch (BadLocationException e1) {
+                    e1.printStackTrace();
+                }
+            }
+        });
+            frame.setVisible(true);
+            frame.setSize(500,300);
+        }
 
 
     public static void main(String[] args) {
@@ -95,7 +105,8 @@ public class REPLConsole {
     }
 
 
-    private static class Filter extends DocumentFilter {
+    private class Filter extends DocumentFilter {
+
 
         @Override
         public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr) throws BadLocationException {
@@ -113,7 +124,8 @@ public class REPLConsole {
         public void replace(final FilterBypass fb, final int offset, final int length, final String text, final AttributeSet attrs)
                 throws BadLocationException {
             if (cursorOnLastLine(offset, fb)) {
-                super.replace(fb, offset, length, text, attrs);
+                singleEditCommand = new SingleEditCommand(fb.getDocument(), text, offset);
+                singleEditCommand.execute();
             }
         }
 
@@ -136,4 +148,36 @@ public class REPLConsole {
     private static int lastLineIndex(Document document) throws BadLocationException {
         return document.getText(0, document.getLength()).lastIndexOf(System.lineSeparator());
     }
+
+    interface Command {
+        public void execute() throws BadLocationException;
+        public void unexecute() throws BadLocationException;
+
+    }
+
+    static class SingleEditCommand implements Command {
+      private Document document;
+      private String text;
+      private int offset;
+      boolean wasundo;
+
+        SingleEditCommand(Document document, String text, int offset) {
+            this.document = document;
+            this.text = text;
+            this.offset = offset;
+        }
+
+        @Override
+        public void execute() throws BadLocationException {
+            document.insertString(offset, text, null);
+        }
+
+        public void unexecute() throws BadLocationException {
+            if(!wasundo) {
+                document.remove(offset, text.length());
+                wasundo = true;
+            }
+        }
+    }
+
 }
